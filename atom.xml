@@ -1,0 +1,1041 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+    <id>https://kelephant.github.io/gridea</id>
+    <title>Kelephant&apos;s  Blog</title>
+    <updated>2024-04-10T08:16:26.468Z</updated>
+    <generator>https://github.com/jpmonette/feed</generator>
+    <link rel="alternate" href="https://kelephant.github.io/gridea"/>
+    <link rel="self" href="https://kelephant.github.io/gridea/atom.xml"/>
+    <subtitle>温故而知新</subtitle>
+    <logo>https://kelephant.github.io/gridea/images/avatar.png</logo>
+    <icon>https://kelephant.github.io/gridea/favicon.ico</icon>
+    <rights>All rights reserved 2024, Kelephant&apos;s  Blog</rights>
+    <entry>
+        <title type="html"><![CDATA[C语言定时任务库的实现（一）]]></title>
+        <id>https://kelephant.github.io/gridea/post/c-yu-yan-ding-shi-ren-wu-ku-de-shi-xian-yi/</id>
+        <link href="https://kelephant.github.io/gridea/post/c-yu-yan-ding-shi-ren-wu-ku-de-shi-xian-yi/">
+        </link>
+        <updated>2024-04-10T07:13:14.000Z</updated>
+        <summary type="html"><![CDATA[<p>在项目开发过程中，我们常常需要定时的执行一些任务，通常的做法我们会创建一个线程，然后在线程里执行一个定时任务，如果有N个定时任务，则需要启动N个定时任务。这种做法有以下几个弊端。<br>
+1、频繁的创建线程可能会影响系统的整体运作性能。<br>
+2、每实现一个定时任务，则需要考虑任务的创建，销毁，任务的执行，而且大部分的内容是冗余的。<br>
+3、多任务之间的同步问题。<br>
+为了解决以上问题，我实现了一个多实例单线程多任务的定时器库。</p>
+]]></summary>
+        <content type="html"><![CDATA[<p>在项目开发过程中，我们常常需要定时的执行一些任务，通常的做法我们会创建一个线程，然后在线程里执行一个定时任务，如果有N个定时任务，则需要启动N个定时任务。这种做法有以下几个弊端。<br>
+1、频繁的创建线程可能会影响系统的整体运作性能。<br>
+2、每实现一个定时任务，则需要考虑任务的创建，销毁，任务的执行，而且大部分的内容是冗余的。<br>
+3、多任务之间的同步问题。<br>
+为了解决以上问题，我实现了一个多实例单线程多任务的定时器库。</p>
+<!-- more -->
+<h1 id="实现方案">实现方案</h1>
+<h2 id="数据结构">数据结构</h2>
+<pre><code>typedef struct {
+   struct list_head       head;                    // 链表头
+   mtimer_task_callback   run;                     // 任务回调
+   unsigned int        id;                         // 定时任务id
+   unsigned int        last_tick;                  // 上一次执行的时间
+   unsigned int        timeout;                    // 定时的超时时间，ms
+   mtimer_task_mode    mode;                       // 定时任务的工作模式，两种工作模式。
+   void           *user_data1;                     // 定时任务的上下文1
+   void           *user_data2;                     // 定时任务的上下文2
+   unsigned int        remove;                     // 定时任务是否标记删除
+} mtimer_task;                                      // 定时任务节点
+
+typedef struct {
+   struct list_head    list;                       // 任务列表
+   pthread_mutex_t  lock;                          // 锁
+   unsigned int            id;                     // 待分配的定时器任务id
+   mtimer_get_current_time get_current_time;       // 获取ms值的接口
+} mtimer_handle;                                    // 定时器实例
+</code></pre>
+<h2 id="工作模式">工作模式</h2>
+<h3 id="定时器有两种工作模式">定时器有两种工作模式</h3>
+<pre><code>typedef enum {
+   MTIMER_MODE_LOOP = 0,        // 循环任务，每隔一个timeout执行一次
+   MTIMER_MODE_NOT_LOOP,        // 非循环任务，仅在timeout时执行一次
+} mtimer_task_mode;
+</code></pre>
+<h2 id="接口">接口</h2>
+<pre><code>/*****************************************************************************
+函 数 名  : mtimer_create
+功能描述  : 创建定时器库实例
+输入参数  : mtimer_get_current_time func  
+输出参数  : 无
+返 回 值  : void
+           NULL    : 创建失败
+           非NULL   : 创建成功
+*****************************************************************************/
+void *mtimer_create(mtimer_get_current_time func);
+
+/*****************************************************************************
+函 数 名  : mtimer_destroy
+功能描述  : 销毁定时器库实例
+输入参数  : void *handle  
+输出参数  : 无
+返 回 值  : int
+           0   成功
+           &lt;0  失败
+*****************************************************************************/
+int mtimer_destroy(void *handle);
+
+/*****************************************************************************
+函 数 名  : mtimer_task_reg
+功能描述  : 注册定时器任务
+输入参数  : void *handle                 
+            mtimer_task_callback run  任务回调
+            unsigned int    timeout   超时时间
+            mtimer_task_mode    mode  LOOP:循环, 每隔timeout触发一次; NOT_LOOP:仅运行一次
+            void       *user_data1    回调参数1
+            void       *user_data2    回调参数2
+输出参数  : 无
+返 回 值  : unsigned
+           返回定时器id
+*****************************************************************************/
+unsigned int mtimer_task_reg(
+   void *handle,
+   mtimer_task_callback run,
+   unsigned int    timeout,
+   mtimer_task_mode    mode,
+   void       *user_data1,
+   void       *user_data2);
+
+/*****************************************************************************
+函 数 名  : mtimer_task_unreg
+功能描述  : 反注册定时器任务
+输入参数  : void *handle          
+            unsigned int task_id   定时任务id  
+输出参数  : 无
+返 回 值  : 0: 反注册成功
+           &lt;0: 反注册失败
+*****************************************************************************/
+int mtimer_task_unreg(void *handle, unsigned int task_id);
+
+/*****************************************************************************
+函 数 名  : mtimer_schedule
+功能描述  : 定时任务调度
+输入参数  : void *handle    
+            unsigned int n  最多可执行的定时任务数，防止线程阻塞太长时间
+输出参数  : 无
+返 回 值  : 0  执行正常
+           &lt;0  执行异常
+*****************************************************************************/
+int mtimer_schedule(void *handle, unsigned int n);
+</code></pre>
+<h3 id="使用范例">使用范例</h3>
+<pre><code>int func1(void *data1, void *data2)
+{
+   log_error(&quot;[time:%u, func1], data1:%s, data2:%s\n&quot;, Clock_GetTimeMs(),
+             (char *)data1, (char *)data2);
+   return 0;
+}
+
+int func2(void *data1, void *data2)
+{
+   log_error(&quot;[time:%u, func2], data1:%s, data2:%s\n&quot;, Clock_GetTimeMs(),
+             (char *)data1, (char *)data2);
+   return 0;
+}
+
+void *mtimer_debug_loop(void *handle)
+{
+
+   unsigned id1, id2;
+
+   log_error(&quot;tick: %u------------------------------------ 1\n\n&quot;,
+             Clock_GetTimeMs());
+   id1 = mtimer_task_reg(handle, func1, 500, MTIMER_MODE_LOOP, &quot;1data1&quot;, &quot;1data2&quot;);
+   id2 = mtimer_task_reg(handle, func2, 1000, MTIMER_MODE_NOT_LOOP, &quot;2data1&quot;,
+                         &quot;2data2&quot;);
+   while (1) {
+       mtimer_schedule(handle, 10);
+       Clock_SleepMs(100);
+   }
+
+   mtimer_destroy(handle);
+
+   return NULL;
+}
+
+int mtimer_debug()
+{
+   void *handle;
+   if (IS_NULL(handle = mtimer_create(Clock_GetTimeMs))) {
+       log_error(&quot;mtimer_create failed\n&quot;);
+       return -1;
+   }
+
+   pthread_t tid;
+   pthread_create(&amp;tid, NULL, mtimer_debug_loop, (void *)handle);
+   pthread_detach(tid);
+
+   return 0;
+}
+</code></pre>
+<h1 id="完整代码">完整代码</h1>
+<p>代码还没有整理好，后续整理完之后会有更新，迫切需要的可以私聊</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[openbmc 异常栈分析及复盘]]></title>
+        <id>https://kelephant.github.io/gridea/post/openbmc-yi-chang-zhan-fen-xi-ji-fu-pan/</id>
+        <link href="https://kelephant.github.io/gridea/post/openbmc-yi-chang-zhan-fen-xi-ji-fu-pan/">
+        </link>
+        <updated>2024-04-09T14:53:33.000Z</updated>
+        <summary type="html"><![CDATA[<p>Openbmc ipmi在运行之后，出现段错误</p>
+]]></summary>
+        <content type="html"><![CDATA[<p>Openbmc ipmi在运行之后，出现段错误</p>
+<!-- more -->
+<h1 id="背景">背景</h1>
+<p>Openbmc ipmi在运行之后，出现段错误，段错误的dump信息如下</p>
+<p>通过堆栈可以看到异常在openssl库里面，再往上追踪已经没有栈了</p>
+<h1 id="分析">分析</h1>
+<p>Openssl库正常是不会有问题的，可以先暂时先排除。再往上就是栈被破坏了，谁调用EVP_Q_mac不知道，分析到这里就懒得再往下追踪了。后续通过替换openbmc版本，ipmi版本尝试解决，做了很多无用功。最面，通过分析github上的log才找到真正的问题。如果当初硬着头皮，往下想想，或许能更快发现问题，该反思反思。</p>
+<ol>
+<li>谁调用了EVP_Q_mac？
+<ol>
+<li>
+<p>Ipmi并没有直接调用该函数，那就是间接调用，如果库没有带符号表，那问题复杂度更高了。</p>
+<p><strong>（1）没有符号表</strong></p>
+<ol>
+<li><strong>如果是直接调用，我们直接打印参数内容</strong></li>
+<li><strong>间接调用，需要找到EVP_Q_mac的各种引用函数，再一个个追踪引用函数</strong></li>
+</ol>
+<p><strong>（2）有符号表：通过设置断点，在栈被破坏前，把函数停住，把栈先打出来，这样就清楚异常的具体位置了。</strong></p>
+<ol>
+<li>在异常的位置设置一个断点</li>
+<li>run</li>
+<li>在运行到断点的时候自动停止，执行bt，通过这个方式就能看到异常的点在read password了<br>
+<img src="https://kelephant.github.io/gridea/post-images/1712674496787.png" alt="" loading="lazy"></li>
+</ol>
+</li>
+<li>
+<p>栈为什么被破坏？被破坏的栈有没有办法恢复，或者调试手段防止栈被破坏？</p>
+<ol>
+<li>Gdb在执行时是否能加参数，保护栈不被破坏？似乎没有找到解决办法</li>
+<li>Gcc编译参数，参考下面的文章：https://outflux.net/blog/archives/2014/01/27/fstack-protector-strong/</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+<h1 id="64位系统地址翻译">64位系统地址翻译</h1>
+<ol>
+<li>找到异常地址对应的段（/proc/{pid}/maps）</li>
+<li>将地址与段的起始地址，作差，即可得到异常的位置</li>
+<li>如果是.so文件，通过objdump -d libcrypto.so.3 | grep 1b02a0(这个是作差后的值)</li>
+<li>如果是可执行文件，通过addr2line即可</li>
+</ol>
+<h1 id="其他">其他</h1>
+<h2 id="动态库加载情况">动态库加载情况</h2>
+<p>info sharedlibrary</p>
+<h2 id="所有线程的bt">所有线程的bt</h2>
+<p>thread apply all bt</p>
+<p>使用该办法可以定位死锁问题</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[记一次内核死锁的调试过程]]></title>
+        <id>https://kelephant.github.io/gridea/post/ji-yi-ci-nei-he-si-suo-de-diao-shi-guo-cheng/</id>
+        <link href="https://kelephant.github.io/gridea/post/ji-yi-ci-nei-he-si-suo-de-diao-shi-guo-cheng/">
+        </link>
+        <updated>2024-04-09T14:39:02.000Z</updated>
+        <content type="html"><![CDATA[<h1 id="kernel关机死锁问">Kernel关机死锁问</h1>
+<h1 id="背景">背景</h1>
+<h2 id="内核版本">内核版本</h2>
+<p>Linux 4.4.194 ohci_hcd</p>
+<h2 id="问题描述">问题描述</h2>
+<p><strong>执行shutdown -h now</strong></p>
+<pre><code>[  OK  ] Stopped Load Kernel Modules.
+
+[  OK  ] Unmounted /share.
+
+[  OK  ] Stopped target Local File Systems (Pre).
+
+[  OK  ] Reached target Unmount All Filesystems.
+
+[  OK  ] Stopped Create Static Device Nodes in /dev.
+
+[  OK  ] Stopped Create System Users.
+
+[  OK  ] Stopped Remount Root and Kernel File Systems.
+
+[  OK  ] Reached target Shutdown.
+
+[  OK  ] Reached target Final Step.
+
+[  OK  ] Finished Power-Off.
+
+[  OK  ] Reached target Power-Off.
+
+[   69.279680]
+
+[   69.281172] ======================================================
+
+[   69.287345] [ INFO: possible circular locking dependency detected ]
+
+[   69.293605] 4.4.194 #1 Not tainted
+
+[   69.297001] -------------------------------------------------------
+
+[   69.303265] systemd-shutdow/1 is trying to acquire lock:
+
+[   69.303286]  (&amp;policy-&gt;rwsem){+++++.}, at: [&lt;ffffff800884335c&gt;] cpufreq_update_policy+0x40/0x158
+
+[   69.303287]
+
+[   69.303287] but task is already holding lock:
+
+[   69.303300]  (mdev_list_sem){++++..}, at: [&lt;ffffff80085577d0&gt;] rockchip_system_status_notifier+0x34/0x118
+
+[   69.303302]
+
+[   69.303302] which lock already depends on the new lock.
+
+[   69.303302]
+
+[   69.303303]
+
+[   69.303303] the existing dependency chain (in reverse order) is:
+
+[   69.303307]
+
+[   69.303307] -&gt; #2 (mdev_list_sem){++++..}:
+
+[   69.303313]        [&lt;ffffff800811f264&gt;] __lock_acquire+0x1348/0x191c
+
+[   69.303317]        [&lt;ffffff800811febc&gt;] lock_acquire+0x1e0/0x23c
+
+[   69.303323]        [&lt;ffffff8008c4ea64&gt;] down_read+0x5c/0xdc
+
+[   69.303327DDR Version 1.24 20191016
+
+In
+
+---
+
+执行reboot，内核deadlock，会自动重启
+
+Stopping WPA supplicant...
+
+[  OK  ] Stopped WPA supplicant.
+
+Stopping D-Bus System Message Bus...
+
+[  OK  ] Stopped D-Bus System Message Bus.
+
+[  OK  ] Stopped target Basic System.
+
+[  OK  ] Stopped target Paths.
+
+[  OK  ] Stopped target Slices.
+
+[  OK  ] Removed slice User and Session Slice.
+
+[  OK  ] Stopped target Sockets.
+
+[  OK  ] Closed D-Bus System Message Bus Socket.
+
+[  OK  ] Closed Docker Socket for the API.
+
+[  OK  ] Stopped target System Initialization.
+
+[  OK  ] Stopped target Local Encrypted Volumes.
+
+[  OK  ] Stopped Dispatch Password …ts to Console Directory Watch.
+
+[  OK  ] Stopped Forward Password R…uests to Wall Directory Watch.
+
+[  OK  ] Stopped target Swap.
+
+[  OK  ] Closed Syslog Socket.
+
+Stopping Network Time Synchronization...
+
+Stopping Update UTMP about System Boot/Shutdown...
+
+[  OK  ] Stopped Network Name Resolution.
+
+[  OK  ] Stopped Update UTMP about System Boot/Shutdown.
+
+[  OK  ] Stopped ifup for eth0.
+
+[  OK  ] Stopped Network Time Synchronization.
+
+[  OK  ] Stopped Create Volatile Files and Directories.
+
+[  OK  ] Stopped ifup for eth1.13.
+
+[  OK  ] Stopped ifup for eth1.
+
+[  OK  ] Stopped Raise network interfaces.
+
+[  OK  ] Stopped target Local File Systems.
+
+Unmounting /share...
+
+[  OK  ] Stopped Apply Kernel Variables.
+
+[  OK  ] Stopped Load Kernel Modules.
+
+[  OK  ] Unmounted /share.
+
+[  OK  ] Stopped target Local File Systems (Pre).
+
+[  OK  ] Reached target Unmount All Filesystems.
+
+[  OK  ] Stopped Create Static Device Nodes in /dev.
+
+[  OK  ] Stopped Create System Users.
+
+[  OK  ] Stopped Remount Root and Kernel File Systems.
+
+[  OK  ] Reached target Shutdown.
+
+[  OK  ] Reached target Final Step.
+
+[  OK  ] Finished Reboot.
+
+[  OK  ] Reached target Reboot.
+
+[   21.169263] dw_wdt: unexpected close, system will reboot soon
+
+[   21.550470]
+
+[   21.551963] ======================================================
+
+[   21.558139] [ INFO: possible circular locking dependency detected ]
+
+[   21.564401] 4.4.194 #1 Not tainted
+
+[   21.567799] -------------------------------------------------------
+
+[   21.574059] systemd-shutdow/1 is trying to acquire lock:
+
+[   21.579364]  (&amp;policy-&gt;rwsem){+++++.}, at: [&lt;ffffff800884335c&gt;] cpufreq_update_policy+0x40/0x158
+
+[   21.588223]
+
+[   21.588223] but task is already holding lock:
+
+[   21.594049]  (mdev_list_sem){++++..}, at: [&lt;ffffff80085577d0&gt;] rockchip_system_status_notifier+0x34/0x118
+
+[   21.603681]
+
+[   21.603681] which lock already depends on the new lock.
+
+[   21.603681]
+
+[   21.611852]
+
+[   21.611852] the existing dependency chain (in reverse order) is:
+
+[   21.619321]
+
+- &gt; #2 (mdev_list_sem){++++..}:
+
+[   21.623668]        [&lt;ffffff800811f264&gt;] __lock_acquire+0x1348/0x191c
+
+[   21.630031]        [&lt;ffffff800811febc&gt;] lock_acquire+0x1e0/0x23c
+
+[   21.636052]        [&lt;ffffff8008c4ea64&gt;] down_read+0x5c/0xdc
+
+[   21.641641]        [&lt;ffffff8008557310&gt;] rockchip_monitor_cpufreq_policy_notifier+0x48/0x18c
+
+[   21.649995]        [&lt;ffffff80080e0c94&gt;] notifier_call_chain+0x78/0x98
+
+[   21.656451]        [&lt;ffffff80080e10b0&gt;] __blocking_notifier_call_chain+0x58/0x84
+
+[   21.663850]        [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   21.671079]        [&lt;ffffff8008842f48&gt;] cpufreq_set_policy+0xac/0x480
+
+[   21.677535]        [&lt;ffffff8008843adc&gt;] cpufreq_init_policy+0x90/0xc0
+
+[   21.683990]        [&lt;ffffff80088443a4&gt;] cpufreq_online+0x694/0x70c
+
+[   21.690181]        [&lt;ffffff8008844514&gt;] cpufreq_add_dev+0x7c/0xd0
+
+[   21.696286]        [&lt;ffffff800865d148&gt;] subsys_interface_register+0xb8/0xcc
+
+[   21.703264]        [&lt;ffffff80088437b8&gt;] cpufreq_register_driver+0x134/0x204
+
+[   21.710239]        [&lt;ffffff800884dff4&gt;] dt_cpufreq_probe+0x158/0x174
+
+[   21.716600]        [&lt;ffffff80086611fc&gt;] platform_drv_probe+0x5c/0xb0
+
+[   21.722960]        [&lt;ffffff800865ed5c&gt;] driver_probe_device+0x264/0x3d4
+
+[   21.729585]        [&lt;ffffff800865f034&gt;] __device_attach_driver+0x68/0xa4
+
+[   21.736295]        [&lt;ffffff800865ce08&gt;] bus_for_each_drv+0x90/0xa0
+
+[   21.742486]        [&lt;ffffff800865e9e8&gt;] __device_attach+0xb4/0x130
+
+[   21.748676]        [&lt;ffffff800865f1d0&gt;] device_initial_probe+0x24/0x30
+
+[   21.755217]        [&lt;ffffff800865de5c&gt;] bus_probe_device+0x38/0x9c
+
+[   21.761407]        [&lt;ffffff800865bb84&gt;] device_add+0x480/0x528
+
+[   21.767247]        [&lt;ffffff8008660ee4&gt;] platform_device_add+0xe8/0x22c
+
+[   21.773786]        [&lt;ffffff8008661ae8&gt;] platform_device_register_full+0xac/0xec
+
+[   21.781100]        [&lt;ffffff80091fd464&gt;] rockchip_cpufreq_driver_init+0xb8/0x2f8
+
+[   21.788417]        [&lt;ffffff80080830f8&gt;] do_one_initcall+0x78/0x198
+
+[   21.794608]        [&lt;ffffff80091c0e94&gt;] kernel_init_freeable+0x27c/0x280
+
+[   21.801319]        [&lt;ffffff8008c4a0e8&gt;] kernel_init+0x18/0x100
+
+[   21.807159]        [&lt;ffffff8008082f10&gt;] ret_from_fork+0x10/0x40
+
+[   21.813084]
+
+- &gt; #1 ((cpufreq_policy_notifier_list).rwsem){.+.+.+}:
+
+[   21.819422]        [&lt;ffffff800811f264&gt;] __lock_acquire+0x1348/0x191c
+
+[   21.825782]        [&lt;ffffff800811febc&gt;] lock_acquire+0x1e0/0x23c
+
+[   21.831803]        [&lt;ffffff8008c4ea64&gt;] down_read+0x5c/0xdc
+
+[   21.837389]        [&lt;ffffff80080e1098&gt;] __blocking_notifier_call_chain+0x40/0x84
+
+[   21.844787]        [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   21.852015]        [&lt;ffffff8008844350&gt;] cpufreq_online+0x640/0x70c
+
+[   21.858206]        [&lt;ffffff8008844514&gt;] cpufreq_add_dev+0x7c/0xd0
+
+[   21.864312]        [&lt;ffffff800865d148&gt;] subsys_interface_register+0xb8/0xcc
+
+[   21.871287]        [&lt;ffffff80088437b8&gt;] cpufreq_register_driver+0x134/0x204
+
+[   21.878262]        [&lt;ffffff800884dff4&gt;] dt_cpufreq_probe+0x158/0x174
+
+[   21.884623]        [&lt;ffffff80086611fc&gt;] platform_drv_probe+0x5c/0xb0
+
+[   21.890982]        [&lt;ffffff800865ed5c&gt;] driver_probe_device+0x264/0x3d4
+
+[   21.897607]        [&lt;ffffff800865f034&gt;] __device_attach_driver+0x68/0xa4
+
+[   21.904317]        [&lt;ffffff800865ce08&gt;] bus_for_each_drv+0x90/0xa0
+
+[   21.910507]        [&lt;ffffff800865e9e8&gt;] __device_attach+0xb4/0x130
+
+[   21.916698]        [&lt;ffffff800865f1d0&gt;] device_initial_probe+0x24/0x30
+
+[   21.923238]        [&lt;ffffff800865de5c&gt;] bus_probe_device+0x38/0x9c
+
+[   21.929429]        [&lt;ffffff800865bb84&gt;] device_add+0x480/0x528
+
+[   21.935269]        [&lt;ffffff8008660ee4&gt;] platform_device_add+0xe8/0x22c
+
+[   21.941809]        [&lt;ffffff8008661ae8&gt;] platform_device_register_full+0xac/0xec
+
+[   21.949122]        [&lt;ffffff80091fd464&gt;] rockchip_cpufreq_driver_init+0xb8/0x2f8
+
+[   21.956436]        [&lt;ffffff80080830f8&gt;] do_one_initcall+0x78/0x198
+
+[   21.962626]        [&lt;ffffff80091c0e94&gt;] kernel_init_freeable+0x27c/0x280
+
+[   21.969335]        [&lt;ffffff8008c4a0e8&gt;] kernel_init+0x18/0x100
+
+[   21.975176]        [&lt;ffffff8008082f10&gt;] ret_from_fork+0x10/0x40
+
+[   21.981101]
+
+- &gt; #0 (&amp;policy-&gt;rwsem){+++++.}:
+
+[   21.985531]        [&lt;ffffff800811ae44&gt;] print_circular_bug+0x60/0x2bc
+
+[   21.991986]        [&lt;ffffff800811ee1c&gt;] __lock_acquire+0xf00/0x191c
+
+[   21.998261]        [&lt;ffffff800811febc&gt;] lock_acquire+0x1e0/0x23c
+
+[   22.004281]        [&lt;ffffff8008c4eb44&gt;] down_write+0x60/0xd8
+
+[   22.009953]        [&lt;ffffff800884335c&gt;] cpufreq_update_policy+0x40/0x158
+
+[   22.016663]        [&lt;ffffff8008557878&gt;] rockchip_system_status_notifier+0xdc/0x118
+
+[   22.024243]        [&lt;ffffff80080e0c94&gt;] notifier_call_chain+0x78/0x98
+
+[   22.030697]        [&lt;ffffff80080e10b0&gt;] __blocking_notifier_call_chain+0x58/0x84
+
+[   22.038096]        [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   22.045324]        [&lt;ffffff8008556b58&gt;] rockchip_system_status_notifier_call_chain+0x2c/0x54
+
+[   22.053773]        [&lt;ffffff8008556be8&gt;] rockchip_set_system_status+0x68/0xc8
+
+[   22.060833]        [&lt;ffffff8008557628&gt;] rockchip_monitor_reboot_notifier+0x18/0x3c
+
+[   22.068412]        [&lt;ffffff80080e0c94&gt;] notifier_call_chain+0x78/0x98
+
+[   22.074867]        [&lt;ffffff80080e10b0&gt;] __blocking_notifier_call_chain+0x58/0x84
+
+[   22.082265]        [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   22.089493]        [&lt;ffffff80080e2f54&gt;] kernel_restart_prepare+0x2c/0x50
+
+[   22.096203]        [&lt;ffffff80080e30a0&gt;] kernel_restart+0x20/0x68
+
+[   22.102223]        [&lt;ffffff80080e33f8&gt;] SyS_reboot+0x180/0x1dc
+
+[   22.108064]        [&lt;ffffff8008082f70&gt;] el0_svc_naked+0x24/0x28
+
+[   22.113989]
+
+[   22.113989] other info that might help us debug this:
+
+[   22.113989]
+
+[   22.121980] Chain exists of:
+
+&amp;policy-&gt;rwsem --&gt; (cpufreq_policy_notifier_list).rwsem --&gt; mdev_list_sem
+
+[   22.131813]  Possible unsafe locking scenario:
+
+[   22.131813]
+
+[   22.137724]        CPU0                    CPU1
+
+[   22.142255]        ----                    ----
+
+[   22.146787]   lock(mdev_list_sem);
+
+[   22.150223]                                lock((cpufreq_policy_notifier_list).rwsem);
+
+[   22.158164]                                lock(mdev_list_sem);
+
+[   22.164111]   lock(&amp;policy-&gt;rwsem);
+
+[   22.167632]
+
+[   22.167632]  *** DEADLOCK ***
+
+[   22.167632]
+
+[   22.173545] 5 locks held by systemd-shutdow/1:
+
+[   22.177980]  #0:  (reboot_mutex){+.+...}, at: [&lt;ffffff80080e3378&gt;] SyS_reboot+0x100/0x1dc
+
+[   22.186233]  #1:  ((reboot_notifier_list).rwsem){.+.+..}, at: [&lt;ffffff80080e1098&gt;] __blocking_notifier_call_chain+0x40/0x84
+
+[   22.197441]  #2:  (system_status_mutex){+.+...}, at: [&lt;ffffff8008556bac&gt;] rockchip_set_system_status+0x2c/0xc8
+
+[   22.207527]  #3:  ((system_status_notifier_list).rwsem){.+.+..}, at: [&lt;ffffff80080e1098&gt;] __blocking_notifier_call_chain+0x40/0x84
+
+[   22.219339]  #4:  (mdev_list_sem){++++..}, at: [&lt;ffffff80085577d0&gt;] rockchip_system_status_notifier+0x34/0x118
+
+[   22.229425]
+
+[   22.229425] stack backtrace:
+
+[   22.233781] CPU: 4 PID: 1 Comm: systemd-shutdow Not tainted 4.4.194 #1
+
+[   22.240306] Hardware name: Rockchip RK3399 Board Vclusters (DT)
+
+[   22.246218] Call trace:
+
+[   22.248664] [&lt;ffffff8008088a40&gt;] dump_backtrace+0x0/0x234
+
+[   22.254057] [&lt;ffffff8008088c98&gt;] show_stack+0x24/0x30
+
+[   22.259111] [&lt;ffffff80084b0ba4&gt;] dump_stack+0xb4/0xf4
+
+[   22.264163] [&lt;ffffff800811afcc&gt;] print_circular_bug+0x1e8/0x2bc
+
+[   22.270075] [&lt;ffffff800811ee1c&gt;] __lock_acquire+0xf00/0x191c
+
+[   22.275731] [&lt;ffffff800811febc&gt;] lock_acquire+0x1e0/0x23c
+
+[   22.281124] [&lt;ffffff8008c4eb44&gt;] down_write+0x60/0xd8
+
+[   22.286177] [&lt;ffffff800884335c&gt;] cpufreq_update_policy+0x40/0x158
+
+[   22.292270] [&lt;ffffff8008557878&gt;] rockchip_system_status_notifier+0xdc/0x118
+
+[   22.299221] [&lt;ffffff80080e0c94&gt;] notifier_call_chain+0x78/0x98
+
+[   22.305047] [&lt;ffffff80080e10b0&gt;] __blocking_notifier_call_chain+0x58/0x84
+
+[   22.311828] [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   22.318440] [&lt;ffffff8008556b58&gt;] rockchip_system_status_notifier_call_chain+0x2c/0x54
+
+[   22.326262] [&lt;ffffff8008556be8&gt;] rockchip_set_system_status+0x68/0xc8
+
+[   22.332693] [&lt;ffffff8008557628&gt;] rockchip_monitor_reboot_notifier+0x18/0x3c
+
+[   22.339644] [&lt;ffffff80080e0c94&gt;] notifier_call_chain+0x78/0x98
+
+[   22.345470] [&lt;ffffff80080e10b0&gt;] __blocking_notifier_call_chain+0x58/0x84
+
+[   22.352251] [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   22.358863] [&lt;ffffff80080e2f54&gt;] kernel_restart_prepare+0x2c/0x50
+
+[   22.364954] [&lt;ffffff80080e30a0&gt;] kernel_restart+0x20/0x68
+
+[   22.370346] [&lt;ffffff80080e33f8&gt;] SyS_reboot+0x180/0x1dc
+
+[   22.375568] [&lt;ffffff8008082f70&gt;] el0_svc_naked+0x24/0x28
+
+[   22.381157] cpu cpu4: min=816000, max=816000
+
+[   22.386760] cpu cpu0: min=816000, max=816000
+
+[   22.401700] rk-vcodec ff660000.rkvdec: shutdown
+
+[   22.406278] rk-vcodec ff650000.vpu_service: shutdown
+
+[   22.415938] reboot: Restarting system
+
+</code></pre>
+<h2 id="原因">原因</h2>
+<p>Rockchip在初始化时，会注册一个cpu状态更新和cpu策略更新的通知回调。两个回调都会对mdev_list_sem上锁</p>
+<p>关机时会更新cpu状态（怀疑关机就是将CPU频率设置为0，这样CPU就不工作了）</p>
+<p>更新cpu频率时cpufreq驱动会通知rockchip_system_status_notifier更新cpu状态</p>
+<p>Rockchip在更新cpu状态时，反过来再去设置cpu频率并更新CPU策略</p>
+<p>而上一次更新CPU状态时，已经对mdev_list_sem上锁并未释放，现在更新CPU策略又要再次对它上锁，因而死锁</p>
+<h2 id="解决办法">解决办法</h2>
+<p>在更新CPU设备状态时，先不着急更新CPU策略。</p>
+<p>先把所有CPU 设备状态更新了，并记录哪些CPU设备状态已经更新，然后释放锁。</p>
+<p>再更新记录的CPU设备策略。死锁解决</p>
+<h1 id="结束">结束</h1>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[运行时程序内存dump]]></title>
+        <id>https://kelephant.github.io/gridea/post/yun-xing-shi-cheng-xu-nei-cun-dump/</id>
+        <link href="https://kelephant.github.io/gridea/post/yun-xing-shi-cheng-xu-nei-cun-dump/">
+        </link>
+        <updated>2024-04-09T07:58:08.000Z</updated>
+        <summary type="html"><![CDATA[<p>在实际的线上环境中，如果遇到了问题，程序没有退出，并且我们并不希望停止运行的程序时，就要求在在运行时调试程序</p>
+<p>但是通过gdb attach调试，可能在操作过程中，会不小心破坏运行时程序，影响服务</p>
+<p>这个时候可以将运行中的进程内存，dump下来，完了使用gdb调试dump下来的信息</p>
+]]></summary>
+        <content type="html"><![CDATA[<p>在实际的线上环境中，如果遇到了问题，程序没有退出，并且我们并不希望停止运行的程序时，就要求在在运行时调试程序</p>
+<p>但是通过gdb attach调试，可能在操作过程中，会不小心破坏运行时程序，影响服务</p>
+<p>这个时候可以将运行中的进程内存，dump下来，完了使用gdb调试dump下来的信息</p>
+<!-- more -->
+<h1 id="具体操作">具体操作</h1>
+<pre><code>1. gcore 获取core dump
+root@localhost:/share/wenqikai# gcore 177389
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library &quot;/lib/x86_64-linux-gnu/libthread_db.so.1&quot;.
+0x00007fad882d607b in pselect () from /lib/x86_64-linux-gnu/libc.so.6
+warning: Memory read failed for corefile section, 4096 bytes at 0xffffffffff600000.
+Saved corefile core.177389
+[Inferior 1 (process 177389) detached]
+
+2. 调试
+root@localhost:/share/wenqikai# gdb /usr/bin/top ./core.177389 
+GNU gdb (Ubuntu 9.2-0ubuntu1~20.04.1) 9.2
+Copyright (C) 2020 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later &lt;http://gnu.org/licenses/gpl.html&gt;
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+Type &quot;show copying&quot; and &quot;show warranty&quot; for details.
+This GDB was configured as &quot;x86_64-linux-gnu&quot;.
+Type &quot;show configuration&quot; for configuration details.
+For bug reporting instructions, please see:
+&lt;http://www.gnu.org/software/gdb/bugs/&gt;.
+Find the GDB manual and other documentation resources online at:
+    &lt;http://www.gnu.org/software/gdb/documentation/&gt;.
+
+For help, type &quot;help&quot;.
+Type &quot;apropos word&quot; to search for commands related to &quot;word&quot;...
+Reading symbols from /usr/bin/top...
+(No debugging symbols found in /usr/bin/top)
+[New LWP 177389]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library &quot;/lib/x86_64-linux-gnu/libthread_db.so.1&quot;.
+Core was generated by `top'.
+#0  0x00007fad882d607b in __pselect (nfds=1, readfds=0x7ffd719b9a60, writefds=0x0, exceptfds=0x0, timeout=&lt;optimized out&gt;, sigmask=0x55a455914380)
+    at ../sysdeps/unix/sysv/linux/pselect.c:48
+48      ../sysdeps/unix/sysv/linux/pselect.c: No such file or directory.
+(gdb) bt
+#0  0x00007fad882d607b in __pselect (nfds=1, readfds=0x7ffd719b9a60, writefds=0x0, exceptfds=0x0, timeout=&lt;optimized out&gt;, sigmask=0x55a455914380)
+    at ../sysdeps/unix/sysv/linux/pselect.c:48
+#1  0x000055a4558d2bba in ?? ()
+#2  0x00007fad881e5083 in __libc_start_main (main=0x55a4558d1e00, argc=1, argv=0x7ffd719b9c98, init=&lt;optimized out&gt;, fini=&lt;optimized out&gt;, rtld_fini=&lt;optimized out&gt;, 
+    stack_end=0x7ffd719b9c88) at ../csu/libc-start.c:308
+#3  0x000055a4558d334e in ?? ()
+(gdb) info threads 
+  Id   Target Id                          Frame 
+* 1    Thread 0x7fad87f4d7c0 (LWP 177389) 0x00007fad882d607b in __pselect (nfds=1, readfds=0x7ffd719b9a60, writefds=0x0, exceptfds=0x0, timeout=&lt;optimized out&gt;, 
+    sigmask=0x55a455914380) at ../sysdeps/unix/sysv/linux/pselect.c:48
+(gdb) qQuit
+(gdb) qQuit
+</code></pre>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[内核Call Trace调试]]></title>
+        <id>https://kelephant.github.io/gridea/post/nei-he-call-trace-diao-shi/</id>
+        <link href="https://kelephant.github.io/gridea/post/nei-he-call-trace-diao-shi/">
+        </link>
+        <updated>2024-04-09T07:43:29.000Z</updated>
+        <content type="html"><![CDATA[<h1 id="参考文章">参考文章</h1>
+<ol>
+<li>
+<p>该链接讲述了Call Trace 的调试方法<br>
+<a href="https://gist.github.com/doughgle/735229c34c52f9006ca92a2cf24da990">decode-kernel-call-trace.md</a></p>
+</li>
+<li>
+<p>带symbol的内核镜像安装，正常情况下/usr/lib/debug/boot/会保存带symbol的内核镜像，如果找不到，可以按照以下方式自行<br>
+<a href="https://wiki.ubuntu.com/Debug%20Symbol%20Packages">https://wiki.ubuntu.com/Debug Symbol Packages</a></p>
+</li>
+</ol>
+<h1 id="调试步骤">调试步骤</h1>
+<h2 id="创建调试目录">创建调试目录</h2>
+<pre><code class="language-jsx">mkdir -p ~/workspace/call_trace
+</code></pre>
+<h2 id="设计异常模块">设计异常模块</h2>
+<ol>
+<li>创建kernel_call_trace.c文件</li>
+</ol>
+<pre><code class="language-jsx">#include &lt;linux/kernel.h&gt;
+#include &lt;linux/module.h&gt;
+#include &lt;linux/mm.h&gt;
+
+char *ptr = NULL;
+
+int __init init_module(void) {
+  //ptr = kmalloc(sizeof(int), GFP_KERNEL);
+
+  *ptr = 0;
+
+  printk(KERN_ALERT &quot;Call trace:\n&quot;);
+  //backtrace();
+
+  // BUG();
+
+  return 0;
+}
+
+void __exit cleanup_module(void) {
+  //kfree(ptr);
+}
+</code></pre>
+<ol start="2">
+<li>创建Makefile文件</li>
+</ol>
+<pre><code class="language-jsx">obj-m := kernel_call_trace.o
+
+all:
+        make -C /usr/src/linux-headers-$(shell uname -r) M=$(PWD) modules
+
+clean:
+        make -C /usr/src/linux-headers-$(shell uname -r) M=$(PWD) clean
+</code></pre>
+<ol start="3">
+<li>make，生成 kernel_call_trace.ko 模块</li>
+</ol>
+<pre><code class="language-jsx">wenqikai@wenqikai-virtual-machine:~/workspace/call_trace$ make 
+make -C /usr/src/linux-headers-6.2.0-37-generic M=/home/wenqikai/workspace/call_trace modules
+make[1]: Entering directory '/usr/src/linux-headers-6.2.0-37-generic'
+warning: the compiler differs from the one used to build the kernel
+  The kernel was built by: x86_64-linux-gnu-gcc-11 (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0
+  You are using:           gcc-11 (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0
+  CC [M]  /home/wenqikai/workspace/call_trace/kernel_call_trace.o
+  MODPOST /home/wenqikai/workspace/call_trace/Module.symvers
+  CC [M]  /home/wenqikai/workspace/call_trace/kernel_call_trace.mod.o
+  LD [M]  /home/wenqikai/workspace/call_trace/kernel_call_trace.ko
+  BTF [M] /home/wenqikai/workspace/call_trace/kernel_call_trace.ko
+Skipping BTF generation for /home/wenqikai/workspace/call_trace/kernel_call_trace.ko due to unavailability of vmlinux
+make[1]: Leaving directory '/usr/src/linux-headers-6.2.0-37-generic'
+wenqikai@wenqikai-virtual-machine:~/workspace/call_trace$ ls -l
+total 264
+-rw-rw-r-- 1 wenqikai wenqikai   3611 12月 19 13:37 call_trace.log
+-rwxr-xr-x 1 wenqikai wenqikai   7383 12月 19 11:26 decode_stacktrace.sh
+-rw-rw-r-- 1 wenqikai wenqikai    343 12月 19 11:33 kernel_call_trace.c
+-rw-rw-r-- 1 wenqikai wenqikai 115376 12月 19 14:13 kernel_call_trace.ko
+-rw-rw-r-- 1 wenqikai wenqikai     56 12月 19 14:13 kernel_call_trace.mod
+-rw-rw-r-- 1 wenqikai wenqikai    891 12月 19 14:13 kernel_call_trace.mod.c
+-rw-rw-r-- 1 wenqikai wenqikai  93400 12月 19 14:13 kernel_call_trace.mod.o
+-rw-rw-r-- 1 wenqikai wenqikai  23344 12月 19 14:13 kernel_call_trace.o
+-rw-rw-r-- 1 wenqikai wenqikai    176 12月 19 14:12 Makefile
+-rw-rw-r-- 1 wenqikai wenqikai     56 12月 19 14:13 modules.order
+-rw-rw-r-- 1 wenqikai wenqikai      0 12月 19 14:13 Module.symvers
+</code></pre>
+<ol start="4">
+<li>加载kernel_call_trace.ko 模块，由于该内核模块是我们故意制造异常的，所以在一加载时便会报错，通过dmesg可以查到call trace信息。下面标红部分是call trace的完整信息，其中其中标蓝部分表示异常的模块名</li>
+</ol>
+<pre><code class="language-jsx">wenqikai@wenqikai-virtual-machine:~/workspace/call_trace$ sudo insmod  kernel_call_trace.ko 
+[sudo] password for wenqikai: 
+Killed
+wenqikai@wenqikai-virtual-machine:~/workspace/call_trace$ sudo dmesg | tail -100
+...
+[ 2023-12-19 11:34:15 ] [70466.575935] Call Trace:
+[ 2023-12-19 11:34:15 ] [70466.578246]  &lt;TASK&gt;
+[ 2023-12-19 11:34:15 ] [70466.585635]  ? show_regs+0x72/0x90
+[ 2023-12-19 11:34:15 ] [70466.614356]  ? __die+0x25/0x80
+[ 2023-12-19 11:34:15 ] [70466.614381]  ? page_fault_oops+0x79/0x190
+[ 2023-12-19 11:34:15 ] [70466.615773]  ? do_user_addr_fault+0x30c/0x640
+[ 2023-12-19 11:34:15 ] [70466.615775]  ? down_write+0x13/0x90
+[ 2023-12-19 11:34:15 ] [70466.634448]  ? exc_page_fault+0x81/0x1b0
+[ 2023-12-19 11:34:15 ] [70466.635485]  ? asm_exc_page_fault+0x27/0x30
+[ 2023-12-19 11:34:15 ] [70466.635793]  ? __pfx_init_module+0x10/0x10 [kernel_call_trace]
+[ 2023-12-19 11:34:15 ] [70466.635802]  ? init_module+0x14/0xff0 [kernel_call_trace]
+[ 2023-12-19 11:34:15 ] [70466.635806]  ? do_one_initcall+0x46/0x240
+[ 2023-12-19 11:34:15 ] [70466.635870]  ? kmalloc_trace+0x2a/0xb0
+[ 2023-12-19 11:34:15 ] [70466.636483]  do_init_module+0x52/0x240
+[ 2023-12-19 11:34:15 ] [70466.636737]  load_module+0xb96/0xd60
+[ 2023-12-19 11:34:15 ] [70466.636740]  ? kernel_read_file+0x25c/0x2b0
+[ 2023-12-19 11:34:15 ] [70466.636965]  __do_sys_finit_module+0xcc/0x150
+[ 2023-12-19 11:34:15 ] [70466.636967]  ? __do_sys_finit_module+0xcc/0x150
+[ 2023-12-19 11:34:15 ] [70466.636972]  __x64_sys_finit_module+0x18/0x30
+[ 2023-12-19 11:34:15 ] [70466.636974]  do_syscall_64+0x59/0x90
+[ 2023-12-19 11:34:15 ] [70466.636994]  ? irqentry_exit+0x43/0x50
+[ 2023-12-19 11:34:15 ] [70466.636997]  ? exc_page_fault+0x92/0x1b0
+[ 2023-12-19 11:34:15 ] [70466.637000]  entry_SYSCALL_64_after_hwframe+0x73/0xdd
+[ 2023-12-19 11:34:15 ] [70466.637003] RIP: 0033:0x7ff0b911e69d
+[ 2023-12-19 11:34:15 ] [70466.637007] Code: 5b 41 5c c3 66 0f 1f 84 00 00 00 00 00 f3 0f 1e fa 48 89 f8 48 89 f7 48 89 d6 48 89 ca 4d 89 c2 4d 89 c8 4c 8b 4c 24 08 0f 05 &lt;48&gt; 3d 01 f0 ff ff 73 01 c3 48 8b 0d 63 a7 0f 00 f7 d8 64 89 01 48
+[ 2023-12-19 11:34:15 ] [70466.637009] RSP: 002b:00007fff662d0fc8 EFLAGS: 00000246 ORIG_RAX: 0000000000000139
+[ 2023-12-19 11:34:15 ] [70466.637012] RAX: ffffffffffffffda RBX: 0000562af52237b0 RCX: 00007ff0b911e69d
+[ 2023-12-19 11:34:15 ] [70466.637013] RDX: 0000000000000000 RSI: 0000562af4eb5cd2 RDI: 0000000000000003
+[ 2023-12-19 11:34:15 ] [70466.637015] RBP: 0000000000000000 R08: 0000000000000000 R09: 0000000000000000
+[ 2023-12-19 11:34:15 ] [70466.637016] R10: 0000000000000003 R11: 0000000000000246 R12: 0000562af4eb5cd2
+[ 2023-12-19 11:34:15 ] [70466.637018] R13: 0000562af5223760 R14: 0000562af4eb4888 R15: 0000562af52238d0
+</code></pre>
+<ol start="5">
+<li>将Call Trace信息存储到call_trace.log文件中</li>
+<li>拷贝内核符号表解析工具到当前目录下</li>
+</ol>
+<pre><code class="language-jsx">wenqikai@wenqikai-virtual-machine:~/workspace/call_trace$ cp /usr/src/linux-headers-$(uname -r)/scripts/decode_stacktrace.sh .
+wenqikai@wenqikai-virtual-machine:~/workspace/call_trace$ ls -l
+total 264
+-rw-rw-r-- 1 wenqikai wenqikai   3611 12月 19 13:37 call_trace.log
+-rwxr-xr-x 1 wenqikai wenqikai   7383 12月 19 14:22 decode_stacktrace.sh
+-rw-rw-r-- 1 wenqikai wenqikai    343 12月 19 11:33 kernel_call_trace.c
+-rw-rw-r-- 1 wenqikai wenqikai 115376 12月 19 14:13 kernel_call_trace.ko
+-rw-rw-r-- 1 wenqikai wenqikai     56 12月 19 14:13 kernel_call_trace.mod
+-rw-rw-r-- 1 wenqikai wenqikai    891 12月 19 14:13 kernel_call_trace.mod.c
+-rw-rw-r-- 1 wenqikai wenqikai  93400 12月 19 14:13 kernel_call_trace.mod.o
+-rw-rw-r-- 1 wenqikai wenqikai  23344 12月 19 14:13 kernel_call_trace.o
+-rw-rw-r-- 1 wenqikai wenqikai    176 12月 19 14:12 Makefile
+-rw-rw-r-- 1 wenqikai wenqikai     56 12月 19 14:13 modules.order
+-rw-rw-r-- 1 wenqikai wenqikai      0 12月 19 14:13 Module.symvers
+</code></pre>
+<ol start="7">
+<li>使用以下目录解析<br>
+./decode_stacktrace.sh /usr/lib/debug/boot/vmlinux-$(uname -r)  auto /home/wenqikai/workspace/call_trace/ &lt; call_trace.log</li>
+</ol>
+<p>参数解析：</p>
+<ul>
+<li>./decode_stacktrace.sh：解析程序</li>
+<li>/usr/lib/debug/boot/vmlinux-$(uname -r)：带符号表的内核文件，如果找不到该文件，则参考该链接操作安装<a href="https://wiki.ubuntu.com/Debug%20Symbol%20Packages">https://wiki.ubuntu.com/Debug Symbol Packages</a></li>
+<li>auto： 这里应该是自动找到系统模块目录</li>
+<li>/home/wenqikai/workspace/call_trace/：这里是我们自己的模块存放目录</li>
+<li>call_trace.log：call trace文件</li>
+</ul>
+<pre><code class="language-jsx">wenqikai@wenqikai-virtual-machine:~/workspace/call_trace$ ./decode_stacktrace.sh 
+ERROR! vmlinux image must be specified
+Usage:
+        ./decode_stacktrace.sh -r &lt;release&gt; | &lt;vmlinux&gt; [&lt;base path&gt;|auto] [&lt;modules path&gt;]
+wenqikai@wenqikai-virtual-machine:~/workspace/call_trace$ ./decode_stacktrace.sh /usr/lib/debug/boot/vmlinux-$(uname -r)  auto /home/wenqikai/workspace/call_trace/ &lt; call_trace.log 
+[70466.575935] Call Trace:
+[70466.578246]  &lt;TASK&gt;
+[70466.585635] ? show_regs (arch/x86/kernel/dumpstack.c:479) 
+[70466.614356] ? __die (arch/x86/kernel/dumpstack.c:421 arch/x86/kernel/dumpstack.c:434) 
+[70466.614381] ? page_fault_oops (arch/x86/mm/fault.c:727) 
+[70466.615773] ? do_user_addr_fault (arch/x86/mm/fault.c:1270) 
+[70466.615775] ? down_write (arch/x86/include/asm/preempt.h:80 kernel/locking/rwsem.c:261 kernel/locking/rwsem.c:1313 kernel/locking/rwsem.c:1323 kernel/locking/rwsem.c:1574) 
+[70466.634448] ? exc_page_fault (arch/x86/include/asm/paravirt.h:700 arch/x86/mm/fault.c:1479 arch/x86/mm/fault.c:1527) 
+[70466.635485] ? asm_exc_page_fault (arch/x86/include/asm/idtentry.h:570) 
+[70466.635793] ? __pfx_init_module (/home/wenqikai/workspace/call_trace/kernel_call_trace.c:7) kernel_call_trace
+[70466.635802] ? init_module (/home/wenqikai/workspace/call_trace/kernel_call_trace.c:10) kernel_call_trace
+[70466.635806] ? do_one_initcall (init/main.c:1295) 
+[70466.635870] ? kmalloc_trace (mm/slab_common.c:1065) 
+[70466.636483] do_init_module (kernel/module/main.c:2463) 
+[70466.636737] load_module (kernel/module/main.c:2872) 
+[70466.636740] ? kernel_read_file (fs/kernel_read_file.c:110) 
+[70466.636965] __do_sys_finit_module (kernel/module/main.c:2972) 
+[70466.636967] ? __do_sys_finit_module (kernel/module/main.c:2972) 
+[70466.636972] __x64_sys_finit_module (kernel/module/main.c:2939) 
+[70466.636974] do_syscall_64 (arch/x86/entry/common.c:50 arch/x86/entry/common.c:80) 
+[70466.636994] ? irqentry_exit (kernel/entry/common.c:446) 
+[70466.636997] ? exc_page_fault (arch/x86/mm/fault.c:1531) 
+[70466.637000] entry_SYSCALL_64_after_hwframe (arch/x86/entry/entry_64.S:120) 
+[70466.637003] RIP: 0033:0x7ff0b911e69d
+./decode_stacktrace.sh: line 225: ./decodecode: No such file or directory
+[70466.637009] RSP: 002b:00007fff662d0fc8 EFLAGS: 00000246 ORIG_RAX: 0000000000000139
+[70466.637012] RAX: ffffffffffffffda RBX: 0000562af52237b0 RCX: 00007ff0b911e69d
+[70466.637013] RDX: 0000000000000000 RSI: 0000562af4eb5cd2 RDI: 0000000000000003
+[70466.637015] RBP: 0000000000000000 R08: 0000000000000000 R09: 0000000000000000
+[70466.637016] R10: 0000000000000003 R11: 0000000000000246 R12: 0000562af4eb5cd2
+[70466.637018] R13: 0000562af5223760 R14: 0000562af4eb4888 R15: 0000562af52238d0
+[70466.637038]  &lt;/TASK&gt;
+</code></pre>
+<h1 id="其他">其他</h1>
+<p>包查找方法<br>
+方法1. sudo aptitude search linux-image-$(uname -r)-dbgsym</p>
+<p>方法2. 	$ apt search linux-image-$(uname -r)</p>
+<p>Sorting... Done<br>
+Full Text Search... Done<br>
+linux-image-5.4.0-80-generic/focal-updates,focal-security,now 5.4.0-80.90 amd64 [installed,automatic]<br>
+Signed kernel image generic</p>
+<pre><code>	linux-image-5.4.0-80-generic-dbgsym/focal-updates,now 5.4.0-80.90 amd64 [installed]
+	  Signed kernel image generic
+
+	$ sudo apt install linux-image-`uname -r`-dbgsym
+
+</code></pre>
+<h1 id="结束">结束</h1>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[关于]]></title>
+        <id>https://kelephant.github.io/gridea/post/about/</id>
+        <link href="https://kelephant.github.io/gridea/post/about/">
+        </link>
+        <updated>2019-01-25T11:09:48.000Z</updated>
+        <content type="html"><![CDATA[<blockquote>
+<p>欢迎来到我的小站呀，很高兴遇见你！🤝</p>
+</blockquote>
+<h2 id="关于本站">🏠 关于本站</h2>
+<h2 id="博主是谁">👨‍💻 博主是谁</h2>
+<h2 id="兴趣爱好">⛹ 兴趣爱好</h2>
+<h2 id="联系我呀">📬 联系我呀</h2>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[Hello Gridea]]></title>
+        <id>https://kelephant.github.io/gridea/post/hello-gridea/</id>
+        <link href="https://kelephant.github.io/gridea/post/hello-gridea/">
+        </link>
+        <updated>2018-12-11T16:00:00.000Z</updated>
+        <summary type="html"><![CDATA[<p>👏  欢迎使用 <strong>Gridea</strong> ！<br>
+✍️  <strong>Gridea</strong> 一个静态博客写作客户端。你可以用它来记录你的生活、心情、知识、笔记、创意... ...</p>
+]]></summary>
+        <content type="html"><![CDATA[<p>👏  欢迎使用 <strong>Gridea</strong> ！<br>
+✍️  <strong>Gridea</strong> 一个静态博客写作客户端。你可以用它来记录你的生活、心情、知识、笔记、创意... ...</p>
+<!-- more -->
+<p><a href="https://github.com/getgridea/gridea">Github</a><br>
+<a href="https://gridea.dev/">Gridea 主页</a><br>
+<a href="https://fehey.com/">示例网站</a></p>
+<h2 id="特性">特性👇</h2>
+<p>📝  你可以使用最酷的 <strong>Markdown</strong> 语法，进行快速创作</p>
+<p>🌉  你可以给文章配上精美的封面图和在文章任意位置插入图片</p>
+<p>🏷️  你可以对文章进行标签分组</p>
+<p>📋  你可以自定义菜单，甚至可以创建外部链接菜单</p>
+<p>💻  你可以在 <strong>Windows</strong>，<strong>MacOS</strong> 或 <strong>Linux</strong> 设备上使用此客户端</p>
+<p>🌎  你可以使用 <strong>𝖦𝗂𝗍𝗁𝗎𝖻 𝖯𝖺𝗀𝖾𝗌</strong> 或 <strong>Coding Pages</strong> 向世界展示，未来将支持更多平台</p>
+<p>💬  你可以进行简单的配置，接入 <a href="https://github.com/gitalk/gitalk">Gitalk</a> 或 <a href="https://github.com/SukkaW/DisqusJS">DisqusJS</a> 评论系统</p>
+<p>🇬🇧  你可以使用<strong>中文简体</strong>或<strong>英语</strong></p>
+<p>🌁  你可以任意使用应用内默认主题或任意第三方主题，强大的主题自定义能力</p>
+<p>🖥  你可以自定义源文件夹，利用 OneDrive、百度网盘、iCloud、Dropbox 等进行多设备同步</p>
+<p>🌱 当然 <strong>Gridea</strong> 还很年轻，有很多不足，但请相信，它会不停向前 🏃</p>
+<p>未来，它一定会成为你离不开的伙伴</p>
+<p>尽情发挥你的才华吧！</p>
+<p>😘 Enjoy~</p>
+]]></content>
+    </entry>
+</feed>

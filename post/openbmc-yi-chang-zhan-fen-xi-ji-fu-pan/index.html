@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" >
+
+<title>openbmc 异常栈分析及复盘 | Kelephant&#39;s  Blog</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+
+<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
+<link rel="shortcut icon" href="https://kelephant.github.io/gridea/favicon.ico?v=1712736983413">
+<link rel="stylesheet" href="https://kelephant.github.io/gridea/styles/main.css">
+
+
+  
+    <link rel="stylesheet" href="https://unpkg.com/gitalk/dist/gitalk.css" />
+  
+
+  
+
+
+<link rel="stylesheet" href="https://unpkg.com/aos@next/dist/aos.css" />
+<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+
+
+
+    <meta name="description" content="Openbmc ipmi在运行之后，出现段错误
+
+背景
+Openbmc ipmi在运行之后，出现段错误，段错误的dump信息如下
+通过堆栈可以看到异常在openssl库里面，再往上追踪已经没有栈了
+分析
+Openssl库正常是不会有问题的，..." />
+    <meta name="keywords" content="openbmc,coredump,debug" />
+  </head>
+  <body>
+    <div id="app" class="main">
+
+      <div class="sidebar" :class="{ 'full-height': menuVisible }">
+  <div class="top-container" data-aos="fade-right">
+    <div class="top-header-container">
+      <a class="site-title-container" href="https://kelephant.github.io/gridea">
+        <img src="https://kelephant.github.io/gridea/images/avatar.png?v=1712736983413" class="site-logo">
+        <h1 class="site-title">Kelephant&#39;s  Blog</h1>
+      </a>
+      <div class="menu-btn" @click="menuVisible = !menuVisible">
+        <div class="line"></div>
+      </div>
+    </div>
+    <div>
+      
+        
+          <a href="/gridea/" class="site-nav">
+            首页
+          </a>
+        
+      
+        
+          <a href="/gridea/archives" class="site-nav">
+            文章
+          </a>
+        
+      
+        
+          <a href="/gridea/tags" class="site-nav">
+            标签
+          </a>
+        
+      
+        
+          <a href="/gridea/post/about" class="site-nav">
+            关于
+          </a>
+        
+      
+    </div>
+  </div>
+  <div class="bottom-container" data-aos="flip-up" data-aos-offset="0">
+    <div class="social-container">
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    </div>
+    <div class="site-description">
+      温故而知新
+    </div>
+    <div class="site-footer">
+      Powered by <a href="https://github.com/getgridea/gridea" target="_blank">Gridea</a> | <a class="rss" href="https://kelephant.github.io/gridea/atom.xml" target="_blank">RSS</a>
+    </div>
+  </div>
+</div>
+
+
+      <div class="main-container">
+        <div class="content-container" data-aos="fade-up">
+          <div class="post-detail">
+            <h2 class="post-title">openbmc 异常栈分析及复盘</h2>
+            <div class="post-date">2024-04-09</div>
+            
+            <div class="post-content" v-pre>
+              <p>Openbmc ipmi在运行之后，出现段错误</p>
+<!-- more -->
+<h1 id="背景">背景</h1>
+<p>Openbmc ipmi在运行之后，出现段错误，段错误的dump信息如下</p>
+<p>通过堆栈可以看到异常在openssl库里面，再往上追踪已经没有栈了</p>
+<h1 id="分析">分析</h1>
+<p>Openssl库正常是不会有问题的，可以先暂时先排除。再往上就是栈被破坏了，谁调用EVP_Q_mac不知道，分析到这里就懒得再往下追踪了。后续通过替换openbmc版本，ipmi版本尝试解决，做了很多无用功。最面，通过分析github上的log才找到真正的问题。如果当初硬着头皮，往下想想，或许能更快发现问题，该反思反思。</p>
+<ol>
+<li>谁调用了EVP_Q_mac？
+<ol>
+<li>
+<p>Ipmi并没有直接调用该函数，那就是间接调用，如果库没有带符号表，那问题复杂度更高了。</p>
+<p><strong>（1）没有符号表</strong></p>
+<ol>
+<li><strong>如果是直接调用，我们直接打印参数内容</strong></li>
+<li><strong>间接调用，需要找到EVP_Q_mac的各种引用函数，再一个个追踪引用函数</strong></li>
+</ol>
+<p><strong>（2）有符号表：通过设置断点，在栈被破坏前，把函数停住，把栈先打出来，这样就清楚异常的具体位置了。</strong></p>
+<ol>
+<li>在异常的位置设置一个断点</li>
+<li>run</li>
+<li>在运行到断点的时候自动停止，执行bt，通过这个方式就能看到异常的点在read password了<br>
+<img src="https://kelephant.github.io/gridea/post-images/1712674496787.png" alt="" loading="lazy"></li>
+</ol>
+</li>
+<li>
+<p>栈为什么被破坏？被破坏的栈有没有办法恢复，或者调试手段防止栈被破坏？</p>
+<ol>
+<li>Gdb在执行时是否能加参数，保护栈不被破坏？似乎没有找到解决办法</li>
+<li>Gcc编译参数，参考下面的文章：https://outflux.net/blog/archives/2014/01/27/fstack-protector-strong/</li>
+</ol>
+</li>
+</ol>
+</li>
+</ol>
+<h1 id="64位系统地址翻译">64位系统地址翻译</h1>
+<ol>
+<li>找到异常地址对应的段（/proc/{pid}/maps）</li>
+<li>将地址与段的起始地址，作差，即可得到异常的位置</li>
+<li>如果是.so文件，通过objdump -d libcrypto.so.3 | grep 1b02a0(这个是作差后的值)</li>
+<li>如果是可执行文件，通过addr2line即可</li>
+</ol>
+<h1 id="其他">其他</h1>
+<h2 id="动态库加载情况">动态库加载情况</h2>
+<p>info sharedlibrary</p>
+<h2 id="所有线程的bt">所有线程的bt</h2>
+<p>thread apply all bt</p>
+<p>使用该办法可以定位死锁问题</p>
+
+            </div>
+            
+              <div class="tag-container">
+                
+                  <a href="https://kelephant.github.io/gridea/tag/6GldNpxoe/" class="tag">
+                    openbmc
+                  </a>
+                
+                  <a href="https://kelephant.github.io/gridea/tag/R47ThOsOa/" class="tag">
+                    coredump
+                  </a>
+                
+                  <a href="https://kelephant.github.io/gridea/tag/yqO2q0D-x4/" class="tag">
+                    debug
+                  </a>
+                
+              </div>
+            
+            
+              <div class="next-post">
+                <div class="next">下一篇</div>
+                <a href="https://kelephant.github.io/gridea/post/ji-yi-ci-nei-he-si-suo-de-diao-shi-guo-cheng/">
+                  <h3 class="post-title">
+                    记一次内核死锁的调试过程
+                  </h3>
+                </a>
+              </div>
+            
+
+            
+              
+                <div id="gitalk-container" data-aos="fade-in"></div>
+              
+
+              
+            
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/aos@next/dist/aos.js"></script>
+<script type="application/javascript">
+
+AOS.init();
+
+var app = new Vue({
+  el: '#app',
+  data: {
+    menuVisible: false,
+  },
+})
+
+</script>
+
+
+
+
+
+  
+    <script src="https://unpkg.com/gitalk/dist/gitalk.min.js"></script>
+    <script>
+
+      var gitalk = new Gitalk({
+        clientID: '67dfec45afac6bff57eb',
+        clientSecret: 'd26553f51a74253ff946e6b439311aa2c8b66bde',
+        repo: 'gridea',
+        owner: 'kelephant',
+        admin: ['kelephant'],
+        id: (location.pathname).substring(0, 49),      // Ensure uniqueness and length less than 50
+        distractionFreeMode: false  // Facebook-like distraction free mode
+      })
+
+      gitalk.render('gitalk-container')
+
+    </script>
+  
+
+  
+
+
+
+
+  </body>
+</html>

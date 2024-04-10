@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" >
+
+<title>记一次内核死锁的调试过程 | Kelephant&#39;s  Blog</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+
+<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
+<link rel="shortcut icon" href="https://kelephant.github.io/gridea/favicon.ico?v=1712736983413">
+<link rel="stylesheet" href="https://kelephant.github.io/gridea/styles/main.css">
+
+
+  
+    <link rel="stylesheet" href="https://unpkg.com/gitalk/dist/gitalk.css" />
+  
+
+  
+
+
+<link rel="stylesheet" href="https://unpkg.com/aos@next/dist/aos.css" />
+<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+
+
+
+    <meta name="description" content="Kernel关机死锁问
+背景
+内核版本
+Linux 4.4.194 ohci_hcd
+问题描述
+执行shutdown -h now
+[  OK  ] Stopped Load Kernel Modules.
+
+[  OK  ] Unmoun..." />
+    <meta name="keywords" content="" />
+  </head>
+  <body>
+    <div id="app" class="main">
+
+      <div class="sidebar" :class="{ 'full-height': menuVisible }">
+  <div class="top-container" data-aos="fade-right">
+    <div class="top-header-container">
+      <a class="site-title-container" href="https://kelephant.github.io/gridea">
+        <img src="https://kelephant.github.io/gridea/images/avatar.png?v=1712736983413" class="site-logo">
+        <h1 class="site-title">Kelephant&#39;s  Blog</h1>
+      </a>
+      <div class="menu-btn" @click="menuVisible = !menuVisible">
+        <div class="line"></div>
+      </div>
+    </div>
+    <div>
+      
+        
+          <a href="/gridea/" class="site-nav">
+            首页
+          </a>
+        
+      
+        
+          <a href="/gridea/archives" class="site-nav">
+            文章
+          </a>
+        
+      
+        
+          <a href="/gridea/tags" class="site-nav">
+            标签
+          </a>
+        
+      
+        
+          <a href="/gridea/post/about" class="site-nav">
+            关于
+          </a>
+        
+      
+    </div>
+  </div>
+  <div class="bottom-container" data-aos="flip-up" data-aos-offset="0">
+    <div class="social-container">
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    </div>
+    <div class="site-description">
+      温故而知新
+    </div>
+    <div class="site-footer">
+      Powered by <a href="https://github.com/getgridea/gridea" target="_blank">Gridea</a> | <a class="rss" href="https://kelephant.github.io/gridea/atom.xml" target="_blank">RSS</a>
+    </div>
+  </div>
+</div>
+
+
+      <div class="main-container">
+        <div class="content-container" data-aos="fade-up">
+          <div class="post-detail">
+            <h2 class="post-title">记一次内核死锁的调试过程</h2>
+            <div class="post-date">2024-04-09</div>
+            
+            <div class="post-content" v-pre>
+              <h1 id="kernel关机死锁问">Kernel关机死锁问</h1>
+<h1 id="背景">背景</h1>
+<h2 id="内核版本">内核版本</h2>
+<p>Linux 4.4.194 ohci_hcd</p>
+<h2 id="问题描述">问题描述</h2>
+<p><strong>执行shutdown -h now</strong></p>
+<pre><code>[  OK  ] Stopped Load Kernel Modules.
+
+[  OK  ] Unmounted /share.
+
+[  OK  ] Stopped target Local File Systems (Pre).
+
+[  OK  ] Reached target Unmount All Filesystems.
+
+[  OK  ] Stopped Create Static Device Nodes in /dev.
+
+[  OK  ] Stopped Create System Users.
+
+[  OK  ] Stopped Remount Root and Kernel File Systems.
+
+[  OK  ] Reached target Shutdown.
+
+[  OK  ] Reached target Final Step.
+
+[  OK  ] Finished Power-Off.
+
+[  OK  ] Reached target Power-Off.
+
+[   69.279680]
+
+[   69.281172] ======================================================
+
+[   69.287345] [ INFO: possible circular locking dependency detected ]
+
+[   69.293605] 4.4.194 #1 Not tainted
+
+[   69.297001] -------------------------------------------------------
+
+[   69.303265] systemd-shutdow/1 is trying to acquire lock:
+
+[   69.303286]  (&amp;policy-&gt;rwsem){+++++.}, at: [&lt;ffffff800884335c&gt;] cpufreq_update_policy+0x40/0x158
+
+[   69.303287]
+
+[   69.303287] but task is already holding lock:
+
+[   69.303300]  (mdev_list_sem){++++..}, at: [&lt;ffffff80085577d0&gt;] rockchip_system_status_notifier+0x34/0x118
+
+[   69.303302]
+
+[   69.303302] which lock already depends on the new lock.
+
+[   69.303302]
+
+[   69.303303]
+
+[   69.303303] the existing dependency chain (in reverse order) is:
+
+[   69.303307]
+
+[   69.303307] -&gt; #2 (mdev_list_sem){++++..}:
+
+[   69.303313]        [&lt;ffffff800811f264&gt;] __lock_acquire+0x1348/0x191c
+
+[   69.303317]        [&lt;ffffff800811febc&gt;] lock_acquire+0x1e0/0x23c
+
+[   69.303323]        [&lt;ffffff8008c4ea64&gt;] down_read+0x5c/0xdc
+
+[   69.303327DDR Version 1.24 20191016
+
+In
+
+---
+
+执行reboot，内核deadlock，会自动重启
+
+Stopping WPA supplicant...
+
+[  OK  ] Stopped WPA supplicant.
+
+Stopping D-Bus System Message Bus...
+
+[  OK  ] Stopped D-Bus System Message Bus.
+
+[  OK  ] Stopped target Basic System.
+
+[  OK  ] Stopped target Paths.
+
+[  OK  ] Stopped target Slices.
+
+[  OK  ] Removed slice User and Session Slice.
+
+[  OK  ] Stopped target Sockets.
+
+[  OK  ] Closed D-Bus System Message Bus Socket.
+
+[  OK  ] Closed Docker Socket for the API.
+
+[  OK  ] Stopped target System Initialization.
+
+[  OK  ] Stopped target Local Encrypted Volumes.
+
+[  OK  ] Stopped Dispatch Password …ts to Console Directory Watch.
+
+[  OK  ] Stopped Forward Password R…uests to Wall Directory Watch.
+
+[  OK  ] Stopped target Swap.
+
+[  OK  ] Closed Syslog Socket.
+
+Stopping Network Time Synchronization...
+
+Stopping Update UTMP about System Boot/Shutdown...
+
+[  OK  ] Stopped Network Name Resolution.
+
+[  OK  ] Stopped Update UTMP about System Boot/Shutdown.
+
+[  OK  ] Stopped ifup for eth0.
+
+[  OK  ] Stopped Network Time Synchronization.
+
+[  OK  ] Stopped Create Volatile Files and Directories.
+
+[  OK  ] Stopped ifup for eth1.13.
+
+[  OK  ] Stopped ifup for eth1.
+
+[  OK  ] Stopped Raise network interfaces.
+
+[  OK  ] Stopped target Local File Systems.
+
+Unmounting /share...
+
+[  OK  ] Stopped Apply Kernel Variables.
+
+[  OK  ] Stopped Load Kernel Modules.
+
+[  OK  ] Unmounted /share.
+
+[  OK  ] Stopped target Local File Systems (Pre).
+
+[  OK  ] Reached target Unmount All Filesystems.
+
+[  OK  ] Stopped Create Static Device Nodes in /dev.
+
+[  OK  ] Stopped Create System Users.
+
+[  OK  ] Stopped Remount Root and Kernel File Systems.
+
+[  OK  ] Reached target Shutdown.
+
+[  OK  ] Reached target Final Step.
+
+[  OK  ] Finished Reboot.
+
+[  OK  ] Reached target Reboot.
+
+[   21.169263] dw_wdt: unexpected close, system will reboot soon
+
+[   21.550470]
+
+[   21.551963] ======================================================
+
+[   21.558139] [ INFO: possible circular locking dependency detected ]
+
+[   21.564401] 4.4.194 #1 Not tainted
+
+[   21.567799] -------------------------------------------------------
+
+[   21.574059] systemd-shutdow/1 is trying to acquire lock:
+
+[   21.579364]  (&amp;policy-&gt;rwsem){+++++.}, at: [&lt;ffffff800884335c&gt;] cpufreq_update_policy+0x40/0x158
+
+[   21.588223]
+
+[   21.588223] but task is already holding lock:
+
+[   21.594049]  (mdev_list_sem){++++..}, at: [&lt;ffffff80085577d0&gt;] rockchip_system_status_notifier+0x34/0x118
+
+[   21.603681]
+
+[   21.603681] which lock already depends on the new lock.
+
+[   21.603681]
+
+[   21.611852]
+
+[   21.611852] the existing dependency chain (in reverse order) is:
+
+[   21.619321]
+
+- &gt; #2 (mdev_list_sem){++++..}:
+
+[   21.623668]        [&lt;ffffff800811f264&gt;] __lock_acquire+0x1348/0x191c
+
+[   21.630031]        [&lt;ffffff800811febc&gt;] lock_acquire+0x1e0/0x23c
+
+[   21.636052]        [&lt;ffffff8008c4ea64&gt;] down_read+0x5c/0xdc
+
+[   21.641641]        [&lt;ffffff8008557310&gt;] rockchip_monitor_cpufreq_policy_notifier+0x48/0x18c
+
+[   21.649995]        [&lt;ffffff80080e0c94&gt;] notifier_call_chain+0x78/0x98
+
+[   21.656451]        [&lt;ffffff80080e10b0&gt;] __blocking_notifier_call_chain+0x58/0x84
+
+[   21.663850]        [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   21.671079]        [&lt;ffffff8008842f48&gt;] cpufreq_set_policy+0xac/0x480
+
+[   21.677535]        [&lt;ffffff8008843adc&gt;] cpufreq_init_policy+0x90/0xc0
+
+[   21.683990]        [&lt;ffffff80088443a4&gt;] cpufreq_online+0x694/0x70c
+
+[   21.690181]        [&lt;ffffff8008844514&gt;] cpufreq_add_dev+0x7c/0xd0
+
+[   21.696286]        [&lt;ffffff800865d148&gt;] subsys_interface_register+0xb8/0xcc
+
+[   21.703264]        [&lt;ffffff80088437b8&gt;] cpufreq_register_driver+0x134/0x204
+
+[   21.710239]        [&lt;ffffff800884dff4&gt;] dt_cpufreq_probe+0x158/0x174
+
+[   21.716600]        [&lt;ffffff80086611fc&gt;] platform_drv_probe+0x5c/0xb0
+
+[   21.722960]        [&lt;ffffff800865ed5c&gt;] driver_probe_device+0x264/0x3d4
+
+[   21.729585]        [&lt;ffffff800865f034&gt;] __device_attach_driver+0x68/0xa4
+
+[   21.736295]        [&lt;ffffff800865ce08&gt;] bus_for_each_drv+0x90/0xa0
+
+[   21.742486]        [&lt;ffffff800865e9e8&gt;] __device_attach+0xb4/0x130
+
+[   21.748676]        [&lt;ffffff800865f1d0&gt;] device_initial_probe+0x24/0x30
+
+[   21.755217]        [&lt;ffffff800865de5c&gt;] bus_probe_device+0x38/0x9c
+
+[   21.761407]        [&lt;ffffff800865bb84&gt;] device_add+0x480/0x528
+
+[   21.767247]        [&lt;ffffff8008660ee4&gt;] platform_device_add+0xe8/0x22c
+
+[   21.773786]        [&lt;ffffff8008661ae8&gt;] platform_device_register_full+0xac/0xec
+
+[   21.781100]        [&lt;ffffff80091fd464&gt;] rockchip_cpufreq_driver_init+0xb8/0x2f8
+
+[   21.788417]        [&lt;ffffff80080830f8&gt;] do_one_initcall+0x78/0x198
+
+[   21.794608]        [&lt;ffffff80091c0e94&gt;] kernel_init_freeable+0x27c/0x280
+
+[   21.801319]        [&lt;ffffff8008c4a0e8&gt;] kernel_init+0x18/0x100
+
+[   21.807159]        [&lt;ffffff8008082f10&gt;] ret_from_fork+0x10/0x40
+
+[   21.813084]
+
+- &gt; #1 ((cpufreq_policy_notifier_list).rwsem){.+.+.+}:
+
+[   21.819422]        [&lt;ffffff800811f264&gt;] __lock_acquire+0x1348/0x191c
+
+[   21.825782]        [&lt;ffffff800811febc&gt;] lock_acquire+0x1e0/0x23c
+
+[   21.831803]        [&lt;ffffff8008c4ea64&gt;] down_read+0x5c/0xdc
+
+[   21.837389]        [&lt;ffffff80080e1098&gt;] __blocking_notifier_call_chain+0x40/0x84
+
+[   21.844787]        [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   21.852015]        [&lt;ffffff8008844350&gt;] cpufreq_online+0x640/0x70c
+
+[   21.858206]        [&lt;ffffff8008844514&gt;] cpufreq_add_dev+0x7c/0xd0
+
+[   21.864312]        [&lt;ffffff800865d148&gt;] subsys_interface_register+0xb8/0xcc
+
+[   21.871287]        [&lt;ffffff80088437b8&gt;] cpufreq_register_driver+0x134/0x204
+
+[   21.878262]        [&lt;ffffff800884dff4&gt;] dt_cpufreq_probe+0x158/0x174
+
+[   21.884623]        [&lt;ffffff80086611fc&gt;] platform_drv_probe+0x5c/0xb0
+
+[   21.890982]        [&lt;ffffff800865ed5c&gt;] driver_probe_device+0x264/0x3d4
+
+[   21.897607]        [&lt;ffffff800865f034&gt;] __device_attach_driver+0x68/0xa4
+
+[   21.904317]        [&lt;ffffff800865ce08&gt;] bus_for_each_drv+0x90/0xa0
+
+[   21.910507]        [&lt;ffffff800865e9e8&gt;] __device_attach+0xb4/0x130
+
+[   21.916698]        [&lt;ffffff800865f1d0&gt;] device_initial_probe+0x24/0x30
+
+[   21.923238]        [&lt;ffffff800865de5c&gt;] bus_probe_device+0x38/0x9c
+
+[   21.929429]        [&lt;ffffff800865bb84&gt;] device_add+0x480/0x528
+
+[   21.935269]        [&lt;ffffff8008660ee4&gt;] platform_device_add+0xe8/0x22c
+
+[   21.941809]        [&lt;ffffff8008661ae8&gt;] platform_device_register_full+0xac/0xec
+
+[   21.949122]        [&lt;ffffff80091fd464&gt;] rockchip_cpufreq_driver_init+0xb8/0x2f8
+
+[   21.956436]        [&lt;ffffff80080830f8&gt;] do_one_initcall+0x78/0x198
+
+[   21.962626]        [&lt;ffffff80091c0e94&gt;] kernel_init_freeable+0x27c/0x280
+
+[   21.969335]        [&lt;ffffff8008c4a0e8&gt;] kernel_init+0x18/0x100
+
+[   21.975176]        [&lt;ffffff8008082f10&gt;] ret_from_fork+0x10/0x40
+
+[   21.981101]
+
+- &gt; #0 (&amp;policy-&gt;rwsem){+++++.}:
+
+[   21.985531]        [&lt;ffffff800811ae44&gt;] print_circular_bug+0x60/0x2bc
+
+[   21.991986]        [&lt;ffffff800811ee1c&gt;] __lock_acquire+0xf00/0x191c
+
+[   21.998261]        [&lt;ffffff800811febc&gt;] lock_acquire+0x1e0/0x23c
+
+[   22.004281]        [&lt;ffffff8008c4eb44&gt;] down_write+0x60/0xd8
+
+[   22.009953]        [&lt;ffffff800884335c&gt;] cpufreq_update_policy+0x40/0x158
+
+[   22.016663]        [&lt;ffffff8008557878&gt;] rockchip_system_status_notifier+0xdc/0x118
+
+[   22.024243]        [&lt;ffffff80080e0c94&gt;] notifier_call_chain+0x78/0x98
+
+[   22.030697]        [&lt;ffffff80080e10b0&gt;] __blocking_notifier_call_chain+0x58/0x84
+
+[   22.038096]        [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   22.045324]        [&lt;ffffff8008556b58&gt;] rockchip_system_status_notifier_call_chain+0x2c/0x54
+
+[   22.053773]        [&lt;ffffff8008556be8&gt;] rockchip_set_system_status+0x68/0xc8
+
+[   22.060833]        [&lt;ffffff8008557628&gt;] rockchip_monitor_reboot_notifier+0x18/0x3c
+
+[   22.068412]        [&lt;ffffff80080e0c94&gt;] notifier_call_chain+0x78/0x98
+
+[   22.074867]        [&lt;ffffff80080e10b0&gt;] __blocking_notifier_call_chain+0x58/0x84
+
+[   22.082265]        [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   22.089493]        [&lt;ffffff80080e2f54&gt;] kernel_restart_prepare+0x2c/0x50
+
+[   22.096203]        [&lt;ffffff80080e30a0&gt;] kernel_restart+0x20/0x68
+
+[   22.102223]        [&lt;ffffff80080e33f8&gt;] SyS_reboot+0x180/0x1dc
+
+[   22.108064]        [&lt;ffffff8008082f70&gt;] el0_svc_naked+0x24/0x28
+
+[   22.113989]
+
+[   22.113989] other info that might help us debug this:
+
+[   22.113989]
+
+[   22.121980] Chain exists of:
+
+&amp;policy-&gt;rwsem --&gt; (cpufreq_policy_notifier_list).rwsem --&gt; mdev_list_sem
+
+[   22.131813]  Possible unsafe locking scenario:
+
+[   22.131813]
+
+[   22.137724]        CPU0                    CPU1
+
+[   22.142255]        ----                    ----
+
+[   22.146787]   lock(mdev_list_sem);
+
+[   22.150223]                                lock((cpufreq_policy_notifier_list).rwsem);
+
+[   22.158164]                                lock(mdev_list_sem);
+
+[   22.164111]   lock(&amp;policy-&gt;rwsem);
+
+[   22.167632]
+
+[   22.167632]  *** DEADLOCK ***
+
+[   22.167632]
+
+[   22.173545] 5 locks held by systemd-shutdow/1:
+
+[   22.177980]  #0:  (reboot_mutex){+.+...}, at: [&lt;ffffff80080e3378&gt;] SyS_reboot+0x100/0x1dc
+
+[   22.186233]  #1:  ((reboot_notifier_list).rwsem){.+.+..}, at: [&lt;ffffff80080e1098&gt;] __blocking_notifier_call_chain+0x40/0x84
+
+[   22.197441]  #2:  (system_status_mutex){+.+...}, at: [&lt;ffffff8008556bac&gt;] rockchip_set_system_status+0x2c/0xc8
+
+[   22.207527]  #3:  ((system_status_notifier_list).rwsem){.+.+..}, at: [&lt;ffffff80080e1098&gt;] __blocking_notifier_call_chain+0x40/0x84
+
+[   22.219339]  #4:  (mdev_list_sem){++++..}, at: [&lt;ffffff80085577d0&gt;] rockchip_system_status_notifier+0x34/0x118
+
+[   22.229425]
+
+[   22.229425] stack backtrace:
+
+[   22.233781] CPU: 4 PID: 1 Comm: systemd-shutdow Not tainted 4.4.194 #1
+
+[   22.240306] Hardware name: Rockchip RK3399 Board Vclusters (DT)
+
+[   22.246218] Call trace:
+
+[   22.248664] [&lt;ffffff8008088a40&gt;] dump_backtrace+0x0/0x234
+
+[   22.254057] [&lt;ffffff8008088c98&gt;] show_stack+0x24/0x30
+
+[   22.259111] [&lt;ffffff80084b0ba4&gt;] dump_stack+0xb4/0xf4
+
+[   22.264163] [&lt;ffffff800811afcc&gt;] print_circular_bug+0x1e8/0x2bc
+
+[   22.270075] [&lt;ffffff800811ee1c&gt;] __lock_acquire+0xf00/0x191c
+
+[   22.275731] [&lt;ffffff800811febc&gt;] lock_acquire+0x1e0/0x23c
+
+[   22.281124] [&lt;ffffff8008c4eb44&gt;] down_write+0x60/0xd8
+
+[   22.286177] [&lt;ffffff800884335c&gt;] cpufreq_update_policy+0x40/0x158
+
+[   22.292270] [&lt;ffffff8008557878&gt;] rockchip_system_status_notifier+0xdc/0x118
+
+[   22.299221] [&lt;ffffff80080e0c94&gt;] notifier_call_chain+0x78/0x98
+
+[   22.305047] [&lt;ffffff80080e10b0&gt;] __blocking_notifier_call_chain+0x58/0x84
+
+[   22.311828] [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   22.318440] [&lt;ffffff8008556b58&gt;] rockchip_system_status_notifier_call_chain+0x2c/0x54
+
+[   22.326262] [&lt;ffffff8008556be8&gt;] rockchip_set_system_status+0x68/0xc8
+
+[   22.332693] [&lt;ffffff8008557628&gt;] rockchip_monitor_reboot_notifier+0x18/0x3c
+
+[   22.339644] [&lt;ffffff80080e0c94&gt;] notifier_call_chain+0x78/0x98
+
+[   22.345470] [&lt;ffffff80080e10b0&gt;] __blocking_notifier_call_chain+0x58/0x84
+
+[   22.352251] [&lt;ffffff80080e1118&gt;] blocking_notifier_call_chain+0x3c/0x4c
+
+[   22.358863] [&lt;ffffff80080e2f54&gt;] kernel_restart_prepare+0x2c/0x50
+
+[   22.364954] [&lt;ffffff80080e30a0&gt;] kernel_restart+0x20/0x68
+
+[   22.370346] [&lt;ffffff80080e33f8&gt;] SyS_reboot+0x180/0x1dc
+
+[   22.375568] [&lt;ffffff8008082f70&gt;] el0_svc_naked+0x24/0x28
+
+[   22.381157] cpu cpu4: min=816000, max=816000
+
+[   22.386760] cpu cpu0: min=816000, max=816000
+
+[   22.401700] rk-vcodec ff660000.rkvdec: shutdown
+
+[   22.406278] rk-vcodec ff650000.vpu_service: shutdown
+
+[   22.415938] reboot: Restarting system
+
+</code></pre>
+<h2 id="原因">原因</h2>
+<p>Rockchip在初始化时，会注册一个cpu状态更新和cpu策略更新的通知回调。两个回调都会对mdev_list_sem上锁</p>
+<p>关机时会更新cpu状态（怀疑关机就是将CPU频率设置为0，这样CPU就不工作了）</p>
+<p>更新cpu频率时cpufreq驱动会通知rockchip_system_status_notifier更新cpu状态</p>
+<p>Rockchip在更新cpu状态时，反过来再去设置cpu频率并更新CPU策略</p>
+<p>而上一次更新CPU状态时，已经对mdev_list_sem上锁并未释放，现在更新CPU策略又要再次对它上锁，因而死锁</p>
+<h2 id="解决办法">解决办法</h2>
+<p>在更新CPU设备状态时，先不着急更新CPU策略。</p>
+<p>先把所有CPU 设备状态更新了，并记录哪些CPU设备状态已经更新，然后释放锁。</p>
+<p>再更新记录的CPU设备策略。死锁解决</p>
+<h1 id="结束">结束</h1>
+
+            </div>
+            
+            
+              <div class="next-post">
+                <div class="next">下一篇</div>
+                <a href="https://kelephant.github.io/gridea/post/yun-xing-shi-cheng-xu-nei-cun-dump/">
+                  <h3 class="post-title">
+                    运行时程序内存dump
+                  </h3>
+                </a>
+              </div>
+            
+
+            
+              
+                <div id="gitalk-container" data-aos="fade-in"></div>
+              
+
+              
+            
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/aos@next/dist/aos.js"></script>
+<script type="application/javascript">
+
+AOS.init();
+
+var app = new Vue({
+  el: '#app',
+  data: {
+    menuVisible: false,
+  },
+})
+
+</script>
+
+
+
+
+
+  
+    <script src="https://unpkg.com/gitalk/dist/gitalk.min.js"></script>
+    <script>
+
+      var gitalk = new Gitalk({
+        clientID: '67dfec45afac6bff57eb',
+        clientSecret: 'd26553f51a74253ff946e6b439311aa2c8b66bde',
+        repo: 'gridea',
+        owner: 'kelephant',
+        admin: ['kelephant'],
+        id: (location.pathname).substring(0, 49),      // Ensure uniqueness and length less than 50
+        distractionFreeMode: false  // Facebook-like distraction free mode
+      })
+
+      gitalk.render('gitalk-container')
+
+    </script>
+  
+
+  
+
+
+
+
+  </body>
+</html>

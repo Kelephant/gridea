@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" >
+
+<title>gdb | Kelephant&#39;s  Blog</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+
+<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
+<link rel="shortcut icon" href="https://kelephant.github.io/gridea/favicon.ico?v=1712736983413">
+<link rel="stylesheet" href="https://kelephant.github.io/gridea/styles/main.css">
+
+
+
+<link rel="stylesheet" href="https://unpkg.com/aos@next/dist/aos.css" />
+<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+
+
+
+    <meta name="description" content="温故而知新">
+  </head>
+  <body>
+    <div id="app" class="main">
+
+      <div class="sidebar" :class="{ 'full-height': menuVisible }">
+  <div class="top-container" data-aos="fade-right">
+    <div class="top-header-container">
+      <a class="site-title-container" href="https://kelephant.github.io/gridea">
+        <img src="https://kelephant.github.io/gridea/images/avatar.png?v=1712736983413" class="site-logo">
+        <h1 class="site-title">Kelephant&#39;s  Blog</h1>
+      </a>
+      <div class="menu-btn" @click="menuVisible = !menuVisible">
+        <div class="line"></div>
+      </div>
+    </div>
+    <div>
+      
+        
+          <a href="/gridea/" class="site-nav">
+            首页
+          </a>
+        
+      
+        
+          <a href="/gridea/archives" class="site-nav">
+            文章
+          </a>
+        
+      
+        
+          <a href="/gridea/tags" class="site-nav">
+            标签
+          </a>
+        
+      
+        
+          <a href="/gridea/post/about" class="site-nav">
+            关于
+          </a>
+        
+      
+    </div>
+  </div>
+  <div class="bottom-container" data-aos="flip-up" data-aos-offset="0">
+    <div class="social-container">
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    </div>
+    <div class="site-description">
+      温故而知新
+    </div>
+    <div class="site-footer">
+      Powered by <a href="https://github.com/getgridea/gridea" target="_blank">Gridea</a> | <a class="rss" href="https://kelephant.github.io/gridea/atom.xml" target="_blank">RSS</a>
+    </div>
+  </div>
+</div>
+
+
+      <div class="main-container">
+        <div class="content-container" data-aos="fade-up">
+          <h2 class="current-tag">标签: gdb</h2>
+          
+            <article class="post-item">
+              <div class="left">
+                <a href="https://kelephant.github.io/gridea/post/yun-xing-shi-cheng-xu-nei-cun-dump/">
+                  <h2 class="post-title">运行时程序内存dump</h2>
+                </a>
+                <div class="post-date">
+                  2024-04-09
+                </div>
+                <div class="post-abstract">
+                  <p>在实际的线上环境中，如果遇到了问题，程序没有退出，并且我们并不希望停止运行的程序时，就要求在在运行时调试程序</p>
+<p>但是通过gdb attach调试，可能在操作过程中，会不小心破坏运行时程序，影响服务</p>
+<p>这个时候可以将运行中的进程内存，dump下来，完了使用gdb调试dump下来的信息</p>
+
+                </div>
+              </div>
+              
+            </article>
+          
+            <article class="post-item">
+              <div class="left">
+                <a href="https://kelephant.github.io/gridea/post/nei-he-call-trace-diao-shi/">
+                  <h2 class="post-title">内核Call Trace调试</h2>
+                </a>
+                <div class="post-date">
+                  2024-04-09
+                </div>
+                <div class="post-abstract">
+                  
+                </div>
+              </div>
+              
+                <a class="right" href="https://kelephant.github.io/gridea/post/nei-he-call-trace-diao-shi/">
+                  <div class="feature-container" style="background-image: url('https://kelephant.github.io/gridea/post-images/nei-he-call-trace-diao-shi.webp')">
+                  </div>
+                </a>
+              
+            </article>
+          
+
+          <div class="pagination-container">
+  
+  
+</div>
+
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/aos@next/dist/aos.js"></script>
+<script type="application/javascript">
+
+AOS.init();
+
+var app = new Vue({
+  el: '#app',
+  data: {
+    menuVisible: false,
+  },
+})
+
+</script>
+
+
+
+
+
+
+  </body>
+</html>
